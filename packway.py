@@ -2,7 +2,6 @@
 
 import csv
 import timeit
-from logging import getLogger
 from snowflake.ingest import SimpleIngestManager
 from snowflake.ingest import StagedFile
 from snowflake.ingest.utils.uris import DEFAULT_SCHEME
@@ -13,6 +12,7 @@ from datetime import timedelta
 
 from requests import HTTPError
 import logging
+import logging.handlers
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from cryptography.hazmat.backends import default_backend
@@ -24,9 +24,21 @@ import re
 
 import pandas as pd
 #import pyarrow
-
+import sys
 import jaydebeapi
-print("Connecting to DB")
+
+LOG_FILE_NAME="packway.application.log"
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+fh = logging.handlers.TimedRotatingFileHandler(LOG_FILE_NAME,when='midnight', backupCount=14)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+fh.setFormatter(formatter)
+logger.addHandler(fh)
+logger.addHandler(logging.StreamHandler(sys.stdout))
+logger.info("Starting up ...")
+logger.info("Connecting to DB")
 # set DB2 connection
 c = jaydebeapi.connect(
     "com.ibm.as400.access.AS400JDBCDriver",
@@ -39,7 +51,7 @@ c = jaydebeapi.connect(
 curs = c.cursor()
 
 
-print("Pripojeno k DB2")
+logger.info("Pripojeno k DB2")
 
 # variables
 snow_user = "ETL_PROCESS_PACKWAY_001"
@@ -113,7 +125,7 @@ write_id = ""
 rows_piped = None
 
 cs = ctx.cursor()
-print("Pripojeno k Snowflake")
+logger.info("Pripojeno k Snowflake")
 
 while (time.time() - start) < run_time_sec:
     loop += 1
@@ -137,7 +149,7 @@ while (time.time() - start) < run_time_sec:
         first[t1[0]] = 2
 
         if (time.time() - last_write[t1[0]]) > snowpipe_interval:
-            print(t1[1] + " jde do kontroly")
+            logger.info("%s jde do kontroly", t1[1])
             last_write[t1[0]] = time.time()
             write_num[t1[0]] += 1
             write_id = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -146,12 +158,12 @@ while (time.time() - start) < run_time_sec:
             curs.execute(qr_DB2[t1[0]].format(last_id[t1[0]]))
             row = curs.fetchall()
 
-            print("Po DB2")
+            logger.info("Po DB2")
 
             # analyse batch
             batch_ids = []
             if row:
-                print("Mame radky: " + str(len(row)) + " po poslednim id: " + str(last_id[t1[0]]))
+                logger.info("Mame radky: %s po poslednim id: %s", str(len(row)), str(last_id[t1[0]]))
                 for r in row:
                     batch_ids.append(float(r[0]))
 
@@ -161,15 +173,15 @@ while (time.time() - start) < run_time_sec:
                 df = pd.DataFrame(row)
                 df.to_csv('batch_to_snowpipe_{0}_{1}.csv'.format(t1[1], write_id), index=False, header=False,
                           encoding="utf-8")
-                print("tisk")
+                logger.info("tisk")
 
                 # break
                 # upload file to the staga
 
                 cs.execute(
                     "put file://c:\\Users\\revolt\\batch_to_snowpipe_{0}_{1}.csv @PACKWAY_POC;".format(t1[1], write_id))
-                print('{0}.{1}.PIPE_{2}'.format(snow_database, snow_schema, t1[1]))
-                print("xx")
+                logger.info('%s.%s.PIPE_%s',snow_database, snow_schema, t1[1])
+                logger.info("xx")
                 # set up connection
                 # print(snow_account)
                 # print(snow_location)
@@ -191,5 +203,6 @@ while (time.time() - start) < run_time_sec:
                 os.remove('batch_to_snowpipe_{0}_{1}.csv'.format(t1[1], write_id))
     # Wait for 20 seconds
     time.sleep(65)
-print("Konec")
+logger.info("Konec")
 c.close()
+logger.info("Connection closed")
